@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -80,7 +80,7 @@ const times = [
 const formatColones = (value: number) =>
   `₡${value.toLocaleString("es-CR")}`;
 
-export default function ReservarPage() {
+function ReservarContent() {
   const searchParams = useSearchParams();
   const serviceFromUrl = searchParams.get("servicio");
   const barberFromUrl = searchParams.get("barbero");
@@ -604,5 +604,23 @@ export default function ReservarPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+export default function ReservarPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-[#0d0d0d] text-[#f3eee7]">
+          <div className="flex min-h-screen items-center justify-center">
+            <p className="text-[10px] uppercase tracking-[0.35em] text-white/40">
+              Cargando reserva...
+            </p>
+          </div>
+        </main>
+      }
+    >
+      <ReservarContent />
+    </Suspense>
   );
 }

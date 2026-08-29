@@ -8,12 +8,15 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  KeyRound,
   Lock,
   LogOut,
+  Mail,
   Scissors,
   ShieldCheck,
   Unlock,
   UserRound,
+  X,
 } from "lucide-react";
 
 import {
@@ -27,17 +30,20 @@ const barberConfig = {
   santiago: {
     name: "Santiago",
     specialty: "Fades & Styling",
-    pin: "1111",
+    defaultPin: "1111",
+    email: "santiago@barberclub.demo",
   },
   marco: {
     name: "Marco",
     specialty: "Barba & Clásicos",
-    pin: "2222",
+    defaultPin: "2222",
+    email: "marco@barberclub.demo",
   },
   andres: {
     name: "Andrés",
     specialty: "Corte moderno",
-    pin: "3333",
+    defaultPin: "3333",
+    email: "andres@barberclub.demo",
   },
 } as const;
 
@@ -58,6 +64,9 @@ const today = () => {
   return local.toISOString().slice(0, 10);
 };
 
+const getPinStorageKey = (slug: string) => `barber-club-pin-${slug}`;
+const getAuthStorageKey = (slug: string) => `barber-club-auth-${slug}`;
+
 export default function BarberPanelPage() {
   const params = useParams<{ nombre: string }>();
   const slug = String(params?.nombre ?? "").toLowerCase();
@@ -70,16 +79,39 @@ export default function BarberPanelPage() {
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [notice, setNotice] = useState("");
 
+  const [showForgotPin, setShowForgotPin] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryStep, setRecoveryStep] = useState<"email" | "code" | "newpin">("email");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recoveryCodeInput, setRecoveryCodeInput] = useState("");
+  const [recoveryNewPin, setRecoveryNewPin] = useState("");
+  const [recoveryConfirmPin, setRecoveryConfirmPin] = useState("");
+  const [recoveryMessage, setRecoveryMessage] = useState("");
+
+  const [showChangePin, setShowChangePin] = useState(false);
+  const [currentPinInput, setCurrentPinInput] = useState("");
+  const [newPinInput, setNewPinInput] = useState("");
+  const [confirmPinInput, setConfirmPinInput] = useState("");
+  const [changePinMessage, setChangePinMessage] = useState("");
+
   const refresh = () => setBookings(getBookings());
+
+  const getCurrentPin = () => {
+    if (!barber) return "";
+    return (
+      window.localStorage.getItem(getPinStorageKey(slug)) ??
+      barber.defaultPin
+    );
+  };
 
   useEffect(() => {
     refresh();
 
     if (barber) {
-      const saved = window.sessionStorage.getItem(
-        `barber-club-auth-${slug}`
+      const savedAuth = window.sessionStorage.getItem(
+        getAuthStorageKey(slug)
       );
-      if (saved === "true") {
+      if (savedAuth === "true") {
         setAuthenticated(true);
       }
     }
@@ -138,11 +170,11 @@ export default function BarberPanelPage() {
   }
 
   const login = () => {
-    if (pin === barber.pin) {
+    if (pin === getCurrentPin()) {
       setAuthenticated(true);
       setPinError("");
       window.sessionStorage.setItem(
-        `barber-club-auth-${slug}`,
+        getAuthStorageKey(slug),
         "true"
       );
       return;
@@ -154,9 +186,7 @@ export default function BarberPanelPage() {
   const logout = () => {
     setAuthenticated(false);
     setPin("");
-    window.sessionStorage.removeItem(
-      `barber-club-auth-${slug}`
-    );
+    window.sessionStorage.removeItem(getAuthStorageKey(slug));
   };
 
   const handleOccupy = (time: string) => {
@@ -185,9 +215,95 @@ export default function BarberPanelPage() {
     refresh();
   };
 
+  const startRecovery = () => {
+    setShowForgotPin(true);
+    setRecoveryEmail("");
+    setRecoveryStep("email");
+    setRecoveryCode("");
+    setRecoveryCodeInput("");
+    setRecoveryNewPin("");
+    setRecoveryConfirmPin("");
+    setRecoveryMessage("");
+  };
+
+  const sendRecoveryEmail = () => {
+    if (recoveryEmail.trim().toLowerCase() !== barber.email.toLowerCase()) {
+      setRecoveryMessage("Ese correo no coincide con el perfil de este barbero.");
+      return;
+    }
+
+    // Demo only: in production this code would be emailed by the backend.
+    const demoCode = String(Math.floor(100000 + Math.random() * 900000));
+    setRecoveryCode(demoCode);
+    setRecoveryStep("code");
+    setRecoveryMessage(
+      `Demo: el correo fue validado. Código temporal: ${demoCode}`
+    );
+  };
+
+  const verifyRecoveryCode = () => {
+    if (recoveryCodeInput !== recoveryCode) {
+      setRecoveryMessage("El código no coincide.");
+      return;
+    }
+
+    setRecoveryStep("newpin");
+    setRecoveryMessage("Código correcto. Ahora crea un PIN nuevo.");
+  };
+
+  const saveRecoveredPin = () => {
+    if (!/^\d{4}$/.test(recoveryNewPin)) {
+      setRecoveryMessage("El PIN debe tener exactamente 4 números.");
+      return;
+    }
+
+    if (recoveryNewPin !== recoveryConfirmPin) {
+      setRecoveryMessage("Los PIN no coinciden.");
+      return;
+    }
+
+    window.localStorage.setItem(
+      getPinStorageKey(slug),
+      recoveryNewPin
+    );
+
+    setPin(recoveryNewPin);
+    setShowForgotPin(false);
+    setPinError("");
+  };
+
+  const changePin = () => {
+    setChangePinMessage("");
+
+    if (currentPinInput !== getCurrentPin()) {
+      setChangePinMessage("El PIN actual no es correcto.");
+      return;
+    }
+
+    if (!/^\d{4}$/.test(newPinInput)) {
+      setChangePinMessage("El PIN nuevo debe tener exactamente 4 números.");
+      return;
+    }
+
+    if (newPinInput !== confirmPinInput) {
+      setChangePinMessage("Los PIN nuevos no coinciden.");
+      return;
+    }
+
+    window.localStorage.setItem(
+      getPinStorageKey(slug),
+      newPinInput
+    );
+
+    setChangePinMessage("PIN actualizado correctamente.");
+    setCurrentPinInput("");
+    setNewPinInput("");
+    setConfirmPinInput("");
+  };
+
   if (!authenticated) {
     return (
-      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0d0d0d] px-6 text-[#f3eee7]">
+      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0d0d0d] px-6 py-10 text-[#f3eee7]">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(200,169,126,0.12),transparent_36%)]" />
 
         <motion.div
@@ -247,11 +363,157 @@ export default function BarberPanelPage() {
             Entrar al panel
           </button>
 
+          <button
+            type="button"
+            onClick={startRecovery}
+            className="mt-4 w-full text-center text-xs text-white/40 transition hover:text-[#c8a97e]"
+          >
+            ¿Olvidaste tu PIN?
+          </button>
+
           <p className="mt-6 text-center text-[10px] leading-5 text-white/25">
-            Acceso demostrativo. En una implementación real el PIN se valida
-            desde un sistema seguro.
+            Acceso demostrativo. En una implementación real el PIN y la
+            recuperación por correo se validan desde un backend seguro.
           </p>
         </motion.div>
+
+        {showForgotPin && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-5 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-[30px] border border-white/10 bg-[#151515] p-6 text-[#f3eee7] md:p-8">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[9px] uppercase tracking-[0.32em] text-[#c8a97e]">
+                    Recuperar acceso
+                  </p>
+                  <h2 className="mt-3 text-3xl tracking-[-0.04em]">
+                    Olvidé mi PIN
+                  </h2>
+                </div>
+
+                <button
+                  onClick={() => setShowForgotPin(false)}
+                  className="rounded-full border border-white/10 p-2 text-white/40"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {recoveryStep === "email" && (
+                <>
+                  <p className="mt-5 text-sm leading-6 text-white/35">
+                    Ingresa el correo asociado a tu perfil. En un sistema real
+                    recibirías ahí un código de recuperación.
+                  </p>
+
+                  <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-white/10 bg-[#0f0f0f] px-4">
+                    <Mail size={16} className="text-[#c8a97e]" />
+                    <input
+                      type="email"
+                      value={recoveryEmail}
+                      onChange={(event) => {
+                        setRecoveryEmail(event.target.value);
+                        setRecoveryMessage("");
+                      }}
+                      placeholder="correo@barberclub.com"
+                      className="w-full bg-transparent py-4 text-sm outline-none"
+                    />
+                  </div>
+
+                  <button
+                    onClick={sendRecoveryEmail}
+                    className="mt-4 w-full rounded-full bg-[#c8a97e] px-5 py-4 text-sm text-[#111]"
+                  >
+                    Enviar código
+                  </button>
+
+                  <p className="mt-4 text-[10px] leading-5 text-white/20">
+                    Correo demo de {barber.name}: {barber.email}
+                  </p>
+                </>
+              )}
+
+              {recoveryStep === "code" && (
+                <>
+                  <p className="mt-5 text-sm leading-6 text-white/35">
+                    Escribe el código de 6 dígitos recibido.
+                  </p>
+
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={recoveryCodeInput}
+                    onChange={(event) =>
+                      setRecoveryCodeInput(
+                        event.target.value.replace(/\D/g, "")
+                      )
+                    }
+                    placeholder="000000"
+                    className="mt-5 w-full rounded-[20px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-center text-xl tracking-[0.3em] outline-none"
+                  />
+
+                  <button
+                    onClick={verifyRecoveryCode}
+                    className="mt-4 w-full rounded-full bg-[#c8a97e] px-5 py-4 text-sm text-[#111]"
+                  >
+                    Verificar código
+                  </button>
+                </>
+              )}
+
+              {recoveryStep === "newpin" && (
+                <>
+                  <p className="mt-5 text-sm leading-6 text-white/35">
+                    Crea un PIN nuevo de 4 números.
+                  </p>
+
+                  <div className="mt-5 space-y-3">
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={recoveryNewPin}
+                      onChange={(event) =>
+                        setRecoveryNewPin(
+                          event.target.value.replace(/\D/g, "")
+                        )
+                      }
+                      placeholder="Nuevo PIN"
+                      className="w-full rounded-[18px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-sm outline-none"
+                    />
+
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={recoveryConfirmPin}
+                      onChange={(event) =>
+                        setRecoveryConfirmPin(
+                          event.target.value.replace(/\D/g, "")
+                        )
+                      }
+                      placeholder="Confirmar nuevo PIN"
+                      className="w-full rounded-[18px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-sm outline-none"
+                    />
+                  </div>
+
+                  <button
+                    onClick={saveRecoveredPin}
+                    className="mt-4 w-full rounded-full bg-[#c8a97e] px-5 py-4 text-sm text-[#111]"
+                  >
+                    Guardar nuevo PIN
+                  </button>
+                </>
+              )}
+
+              {recoveryMessage && (
+                <div className="mt-4 rounded-[16px] border border-[#c8a97e]/15 bg-[#c8a97e]/[0.06] px-4 py-3 text-xs leading-5 text-[#d8c09b]">
+                  {recoveryMessage}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
     );
   }
@@ -262,20 +524,33 @@ export default function BarberPanelPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
           <div>
             <p className="text-[8px] uppercase tracking-[0.35em] text-[#c8a97e]">
-              Barber Club · Mi agenda
+              Barber Club · Perfil
             </p>
             <h1 className="mt-2 text-2xl tracking-[-0.04em]">
               Hola, {barber.name}
             </h1>
           </div>
 
-          <button
-            onClick={logout}
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-3 text-xs text-white/45 transition hover:text-white"
-          >
-            <LogOut size={14} />
-            Salir
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setShowChangePin((value) => !value);
+                setChangePinMessage("");
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-3 text-xs text-white/45 transition hover:text-white"
+            >
+              <KeyRound size={14} />
+              Cambiar PIN
+            </button>
+
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-3 text-xs text-white/45 transition hover:text-white"
+            >
+              <LogOut size={14} />
+              Salir
+            </button>
+          </div>
         </div>
       </header>
 
@@ -291,8 +566,12 @@ export default function BarberPanelPage() {
               </div>
 
               <h2 className="mt-4 text-4xl tracking-[-0.05em] md:text-5xl">
-                Agenda del día
+                Mi agenda
               </h2>
+
+              <p className="mt-3 text-xs text-white/25">
+                Cuenta: {barber.email}
+              </p>
             </div>
 
             <div>
@@ -329,6 +608,90 @@ export default function BarberPanelPage() {
               </div>
             </div>
           </div>
+
+          {showChangePin && (
+            <div className="mt-7 rounded-[26px] border border-white/10 bg-[#151515] p-5 md:p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-[#c8a97e]">
+                    <KeyRound size={15} />
+                    <p className="text-[9px] uppercase tracking-[0.28em]">
+                      Seguridad
+                    </p>
+                  </div>
+                  <h3 className="mt-3 text-2xl tracking-[-0.04em]">
+                    Cambiar PIN
+                  </h3>
+                </div>
+
+                <button
+                  onClick={() => setShowChangePin(false)}
+                  className="rounded-full border border-white/10 p-2 text-white/35"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={currentPinInput}
+                  onChange={(event) =>
+                    setCurrentPinInput(
+                      event.target.value.replace(/\D/g, "")
+                    )
+                  }
+                  placeholder="PIN actual"
+                  className="rounded-[18px] border border-white/10 bg-[#0f0f0f] px-4 py-4 text-sm outline-none"
+                />
+
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={newPinInput}
+                  onChange={(event) =>
+                    setNewPinInput(
+                      event.target.value.replace(/\D/g, "")
+                    )
+                  }
+                  placeholder="PIN nuevo"
+                  className="rounded-[18px] border border-white/10 bg-[#0f0f0f] px-4 py-4 text-sm outline-none"
+                />
+
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={confirmPinInput}
+                  onChange={(event) =>
+                    setConfirmPinInput(
+                      event.target.value.replace(/\D/g, "")
+                    )
+                  }
+                  placeholder="Confirmar PIN"
+                  className="rounded-[18px] border border-white/10 bg-[#0f0f0f] px-4 py-4 text-sm outline-none"
+                />
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  onClick={changePin}
+                  className="rounded-full bg-[#c8a97e] px-5 py-3 text-xs text-[#111]"
+                >
+                  Guardar PIN
+                </button>
+
+                {changePinMessage && (
+                  <p className="text-xs text-[#d8c09b]">
+                    {changePinMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           {notice && (
             <div className="mt-6 rounded-[18px] border border-[#c8a97e]/15 bg-[#c8a97e]/[0.06] px-4 py-3 text-xs text-[#d8c09b]">
@@ -413,9 +776,10 @@ export default function BarberPanelPage() {
             <div className="flex items-start gap-3">
               <Scissors size={16} className="mt-0.5 text-[#c8a97e]" />
               <p className="text-xs leading-6 text-white/30">
-                Este panel está preparado como demostración. Para una barbería
-                real, la agenda se conecta a una base de datos compartida para
-                funcionar entre todos los teléfonos en tiempo real.
+                Demo local: el PIN personalizado y las reservas se guardan en
+                este navegador. Para una barbería real, usuarios, PIN,
+                recuperación por correo y agenda deben conectarse a una base de
+                datos y servicio de correo compartidos entre dispositivos.
               </p>
             </div>
           </div>

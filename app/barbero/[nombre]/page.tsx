@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { motion } from "motion/react";
+import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
   CalendarDays,
@@ -19,12 +20,6 @@ import {
   X,
 } from "lucide-react";
 
-import {
-  BookingRecord,
-  getBookings,
-  occupyWalkIn,
-  releaseSlot,
-} from "@/lib/bookingStore";
 
 const barberConfig = {
   santiago: {
@@ -57,6 +52,21 @@ const times = [
   "5:30 PM",
   "7:00 PM",
 ];
+
+type BookingRecord = {
+  id: string;
+  barber: string;
+  service: string;
+  appointment_date: string;
+  appointment_time: string;
+  customer_name: string;
+  phone: string;
+  email: string | null;
+  status: "reserved" | "walkin";
+  deposit_amount: number;
+  deposit_status: "pending" | "confirmed";
+  created_at: string;
+};
 
 const today = () => {
   const date = new Date();
@@ -94,7 +104,27 @@ export default function BarberPanelPage() {
   const [confirmPinInput, setConfirmPinInput] = useState("");
   const [changePinMessage, setChangePinMessage] = useState("");
 
-  const refresh = () => setBookings(getBookings());
+  const refresh = async () => {
+    if (!barber || !date) {
+      setBookings([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("barber", barber.name)
+      .eq("appointment_date", date)
+      .order("appointment_time");
+
+    if (error) {
+      console.error("Supabase barber bookings error:", error);
+      setNotice("No se pudo cargar la agenda.");
+      return;
+    }
+
+    setBookings((data ?? []) as BookingRecord[]);
+  };
 
   const getCurrentPin = () => {
     if (!barber) return "";
@@ -116,15 +146,27 @@ export default function BarberPanelPage() {
       }
     }
 
-    const handleRefresh = () => refresh();
-    window.addEventListener("storage", handleRefresh);
-    window.addEventListener("barber-club-bookings-updated", handleRefresh);
+    if (!barber || !date) return;
+
+    const channel = supabase
+      .channel(`barber-agenda-${barber.name}-${date}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "bookings",
+        },
+        () => {
+          refresh();
+        }
+      )
+      .subscribe();
 
     return () => {
-      window.removeEventListener("storage", handleRefresh);
-      window.removeEventListener("barber-club-bookings-updated", handleRefresh);
+      supabase.removeChannel(channel);
     };
-  }, [barber, slug]);
+  }, [barber, slug, date]);
 
   const dayBookings = useMemo(() => {
     if (!barber) return [];
@@ -132,7 +174,7 @@ export default function BarberPanelPage() {
     return bookings.filter(
       (booking) =>
         booking.barber === barber.name &&
-        booking.date === date
+        booking.appointment_date === date
     );
   }, [barber, bookings, date]);
 
@@ -145,7 +187,7 @@ export default function BarberPanelPage() {
   ).length;
 
   const getSlot = (time: string) =>
-    dayBookings.find((booking) => booking.time === time);
+    dayBookings.find((booking) => booking.appointment_time === time);
 
   if (!barber) {
     return (
@@ -189,30 +231,60 @@ export default function BarberPanelPage() {
     window.sessionStorage.removeItem(getAuthStorageKey(slug));
   };
 
-  const handleOccupy = (time: string) => {
+  const handleOccupy = async (time: string) => {
     setNotice("");
-    const result = occupyWalkIn(barber.name, date, time);
 
-    if (!result.ok) {
-      setNotice("Ese horario ya está ocupado.");
-      refresh();
+    const { error } = await supabase
+      .from("bookings")
+      .insert({
+        barber: barber.name,
+        service: "Cliente sin cita",
+        appointment_date: date,
+        appointment_time: time,
+        customer_name: "Cliente sin cita",
+        phone: "-",
+        email: null,
+        status: "walkin",
+        deposit_amount: 0,
+        deposit_status: "confirmed",
+      });
+
+    if (error) {
+      console.error("Supabase occupy error:", error);
+
+      if (error.code === "23505") {
+        setNotice("Ese horario ya está ocupado.");
+      } else {
+        setNotice("No se pudo ocupar ese horario.");
+      }
+
+      await refresh();
       return;
     }
 
     setNotice(`Marcaste ${time} como ocupado.`);
-    refresh();
+    await refresh();
   };
 
-  const handleRelease = (booking: BookingRecord) => {
-    releaseSlot(booking.id);
+  const handleRelease = async (booking: BookingRecord) => {
+    const { error } = await supabase
+      .from("bookings")
+      .delete()
+      .eq("id", booking.id);
+
+    if (error) {
+      console.error("Supabase release error:", error);
+      setNotice("No se pudo liberar ese horario.");
+      return;
+    }
 
     setNotice(
       booking.status === "reserved"
-        ? `La cita de ${booking.customerName} fue liberada.`
-        : `${booking.time} vuelve a estar disponible.`
+        ? `La cita de ${booking.customer_name} fue liberada.`
+        : `${booking.appointment_time} vuelve a estar disponible.`
     );
 
-    refresh();
+    await refresh();
   };
 
   const startRecovery = () => {
@@ -729,7 +801,7 @@ export default function BarberPanelPage() {
                     {booking && reserved && (
                       <>
                         <p className="text-sm text-[#d8c09b]">
-                          Reservado · {booking.customerName}
+                          Reservado · {booking.customer_name}
                         </p>
                         <p className="mt-1 text-[10px] text-white/30">
                           {booking.service}
@@ -776,10 +848,9 @@ export default function BarberPanelPage() {
             <div className="flex items-start gap-3">
               <Scissors size={16} className="mt-0.5 text-[#c8a97e]" />
               <p className="text-xs leading-6 text-white/30">
-                Demo local: el PIN personalizado y las reservas se guardan en
-                este navegador. Para una barbería real, usuarios, PIN,
-                recuperación por correo y agenda deben conectarse a una base de
-                datos y servicio de correo compartidos entre dispositivos.
+                La agenda ya está conectada a Supabase y se comparte entre
+                dispositivos. El PIN y la recuperación por correo siguen siendo
+                demostrativos y se guardan localmente en este navegador.
               </p>
             </div>
           </div>

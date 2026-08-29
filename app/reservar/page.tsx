@@ -1,5 +1,6 @@
 "use client";
 
+import { supabase } from "@/lib/supabase";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
@@ -16,10 +17,6 @@ import {
 } from "lucide-react";
 
 import PageIntro from "@/components/PageIntro";
-import {
-  addReservation,
-  getBookings,
-} from "@/lib/bookingStore";
 
 const services = [
   {
@@ -119,20 +116,10 @@ function ReservarContent() {
 
   const [depositAcknowledged, setDepositAcknowledged] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [bookingVersion, setBookingVersion] = useState(0);
+  const [unavailableTimes, setUnavailableTimes] = useState<Set<string>>(
+    new Set()
+  );
   const [bookingError, setBookingError] = useState("");
-
-  useEffect(() => {
-    const refresh = () => setBookingVersion((value) => value + 1);
-
-    window.addEventListener("storage", refresh);
-    window.addEventListener("barber-club-bookings-updated", refresh);
-
-    return () => {
-      window.removeEventListener("storage", refresh);
-      window.removeEventListener("barber-club-bookings-updated", refresh);
-    };
-  }, []);
 
   const currentService = useMemo(
     () =>
@@ -148,19 +135,58 @@ function ReservarContent() {
     [barber]
   );
 
-  const unavailableTimes = useMemo(() => {
-    if (!date || !barber) return new Set<string>();
+  useEffect(() => {
+    let cancelled = false;
 
-    const busy = getBookings()
-      .filter(
-        (booking) =>
-          booking.barber === barber &&
-          booking.date === date
+    const loadUnavailableTimes = async () => {
+      if (!date || !barber) {
+        setUnavailableTimes(new Set());
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("appointment_time")
+        .eq("barber", barber)
+        .eq("appointment_date", date);
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("Supabase availability error:", error);
+        setBookingError(
+          "No se pudo consultar la disponibilidad. Inténtalo nuevamente."
+        );
+        return;
+      }
+
+      setUnavailableTimes(
+        new Set((data ?? []).map((booking) => booking.appointment_time))
+      );
+    };
+
+    loadUnavailableTimes();
+
+    const channel = supabase
+      .channel(`bookings-${barber}-${date || "sin-fecha"}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "bookings",
+        },
+        () => {
+          loadUnavailableTimes();
+        }
       )
-      .map((booking) => booking.time);
+      .subscribe();
 
-    return new Set(busy);
-  }, [barber, date, bookingVersion]);
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [barber, date]);
 
   useEffect(() => {
     // Mientras el cliente todavía está eligiendo, si otro usuario ocupa
@@ -765,27 +791,46 @@ function ReservarContent() {
                     scale: 0.98,
                   }}
                   disabled={!canConfirm}
-                  onClick={() => {
+                  onClick={async () => {
                     setBookingError("");
 
-                    const result = addReservation({
-                      barber,
-                      service,
-                      date,
-                      time,
-                      customerName: name.trim(),
-                      phone: phone.trim(),
-                      email: email.trim(),
-                    });
+                    const { error } = await supabase
+                      .from("bookings")
+                      .insert({
+                        barber,
+                        service,
+                        appointment_date: date,
+                        appointment_time: time,
+                        customer_name: name.trim(),
+                        phone: phone.trim(),
+                        email: email.trim() || null,
+                        status: "reserved",
+                        deposit_amount: DEPOSIT_AMOUNT,
+                        deposit_status: "pending",
+                      });
 
-                    if (!result.ok) {
-                      setBookingVersion((value) => value + 1);
-                      setTime("");
+                    if (error) {
+                      console.error("Supabase booking error:", error);
+
+                      if (error.code === "23505") {
+                        setTime("");
+                        setBookingError(
+                          "Ese horario acaba de ocuparse. Elige otra hora disponible."
+                        );
+                        return;
+                      }
+
                       setBookingError(
-                        "Ese horario acaba de ocuparse. Elige otra hora disponible."
+                        "No se pudo guardar la reserva. Inténtalo nuevamente."
                       );
                       return;
                     }
+
+                    setUnavailableTimes((current) => {
+                      const next = new Set(current);
+                      next.add(time);
+                      return next;
+                    });
 
                     setConfirmed(true);
                   }}

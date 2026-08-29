@@ -85,6 +85,11 @@ export default function BarberPanelPage() {
   const [pin, setPin] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
   const [pinError, setPinError] = useState("");
+
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [date, setDate] = useState(today());
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [notice, setNotice] = useState("");
@@ -137,14 +142,25 @@ export default function BarberPanelPage() {
   useEffect(() => {
     refresh();
 
-    if (barber) {
+    const loadAuth = async () => {
+      if (!barber) return;
+
+      if (slug === "marco") {
+        const { data } = await supabase.auth.getSession();
+        setAuthenticated(Boolean(data.session));
+        return;
+      }
+
       const savedAuth = window.sessionStorage.getItem(
         getAuthStorageKey(slug)
       );
+
       if (savedAuth === "true") {
         setAuthenticated(true);
       }
-    }
+    };
+
+    loadAuth();
 
     if (!barber || !date) return;
 
@@ -211,7 +227,28 @@ export default function BarberPanelPage() {
     );
   }
 
-  const login = () => {
+  const login = async () => {
+    if (slug === "marco") {
+      setAuthError("");
+      setAuthLoading(true);
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword,
+      });
+
+      setAuthLoading(false);
+
+      if (error) {
+        console.error("Supabase auth error:", error);
+        setAuthError("Correo o contraseña incorrectos.");
+        return;
+      }
+
+      setAuthenticated(true);
+      return;
+    }
+
     if (pin === getCurrentPin()) {
       setAuthenticated(true);
       setPinError("");
@@ -225,7 +262,15 @@ export default function BarberPanelPage() {
     setPinError("PIN incorrecto");
   };
 
-  const logout = () => {
+  const logout = async () => {
+    if (slug === "marco") {
+      await supabase.auth.signOut();
+      setAuthenticated(false);
+      setAuthEmail("");
+      setAuthPassword("");
+      return;
+    }
+
     setAuthenticated(false);
     setPin("");
     window.sessionStorage.removeItem(getAuthStorageKey(slug));
@@ -400,53 +445,116 @@ export default function BarberPanelPage() {
             {barber.specialty}
           </p>
 
-          <label className="mt-8 block text-[9px] uppercase tracking-[0.3em] text-white/35">
-            PIN
-          </label>
+          {slug === "marco" ? (
+            <>
+              <label className="mt-8 block text-[9px] uppercase tracking-[0.3em] text-white/35">
+                Correo
+              </label>
 
-          <input
-            type="password"
-            inputMode="numeric"
-            maxLength={4}
-            value={pin}
-            onChange={(event) => {
-              setPin(event.target.value.replace(/\D/g, ""));
-              setPinError("");
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") login();
-            }}
-            placeholder="••••"
-            className="mt-3 w-full rounded-[20px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-center text-2xl tracking-[0.45em] outline-none transition focus:border-[#c8a97e]/50"
-          />
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(event) => {
+                  setAuthEmail(event.target.value);
+                  setAuthError("");
+                }}
+                placeholder="correo@ejemplo.com"
+                className="mt-3 w-full rounded-[20px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-sm outline-none transition focus:border-[#c8a97e]/50"
+              />
 
-          {pinError && (
-            <p className="mt-3 text-center text-xs text-red-300/65">
-              {pinError}
-            </p>
+              <label className="mt-5 block text-[9px] uppercase tracking-[0.3em] text-white/35">
+                Contraseña
+              </label>
+
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(event) => {
+                  setAuthPassword(event.target.value);
+                  setAuthError("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") login();
+                }}
+                placeholder="••••••••"
+                className="mt-3 w-full rounded-[20px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-sm outline-none transition focus:border-[#c8a97e]/50"
+              />
+
+              {authError && (
+                <p className="mt-3 text-center text-xs text-red-300/65">
+                  {authError}
+                </p>
+              )}
+
+              <button
+                onClick={login}
+                disabled={
+                  authLoading ||
+                  !authEmail.trim() ||
+                  authPassword.length < 6
+                }
+                className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#c8a97e] px-6 py-4 text-sm text-[#111] disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                <Lock size={15} />
+                {authLoading ? "Ingresando..." : "Entrar al panel"}
+              </button>
+
+              <p className="mt-6 text-center text-[10px] leading-5 text-white/25">
+                Acceso conectado a Supabase Auth. Usa el correo y la contraseña
+                creados para esta cuenta.
+              </p>
+            </>
+          ) : (
+            <>
+              <label className="mt-8 block text-[9px] uppercase tracking-[0.3em] text-white/35">
+                PIN
+              </label>
+
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                value={pin}
+                onChange={(event) => {
+                  setPin(event.target.value.replace(/\D/g, ""));
+                  setPinError("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") login();
+                }}
+                placeholder="••••"
+                className="mt-3 w-full rounded-[20px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-center text-2xl tracking-[0.45em] outline-none transition focus:border-[#c8a97e]/50"
+              />
+
+              {pinError && (
+                <p className="mt-3 text-center text-xs text-red-300/65">
+                  {pinError}
+                </p>
+              )}
+
+              <button
+                onClick={login}
+                disabled={pin.length !== 4}
+                className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#c8a97e] px-6 py-4 text-sm text-[#111] disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                <Lock size={15} />
+                Entrar al panel
+              </button>
+
+              <button
+                type="button"
+                onClick={startRecovery}
+                className="mt-4 w-full text-center text-xs text-white/40 transition hover:text-[#c8a97e]"
+              >
+                ¿Olvidaste tu PIN?
+              </button>
+
+              <p className="mt-6 text-center text-[10px] leading-5 text-white/25">
+                Santiago y Andrés siguen temporalmente con acceso PIN mientras
+                terminamos su migración a Supabase Auth.
+              </p>
+            </>
           )}
-
-          <button
-            onClick={login}
-            disabled={pin.length !== 4}
-            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#c8a97e] px-6 py-4 text-sm text-[#111] disabled:cursor-not-allowed disabled:opacity-35"
-          >
-            <Lock size={15} />
-            Entrar al panel
-          </button>
-
-          <button
-            type="button"
-            onClick={startRecovery}
-            className="mt-4 w-full text-center text-xs text-white/40 transition hover:text-[#c8a97e]"
-          >
-            ¿Olvidaste tu PIN?
-          </button>
-
-          <p className="mt-6 text-center text-[10px] leading-5 text-white/25">
-            Acceso demostrativo. En una implementación real el PIN y la
-            recuperación por correo se validan desde un backend seguro.
-          </p>
         </motion.div>
 
         {showForgotPin && (
@@ -604,16 +712,18 @@ export default function BarberPanelPage() {
           </div>
 
           <div className="flex gap-2">
-            <button
-              onClick={() => {
-                setShowChangePin((value) => !value);
-                setChangePinMessage("");
-              }}
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-3 text-xs text-white/45 transition hover:text-white"
-            >
-              <KeyRound size={14} />
-              Cambiar PIN
-            </button>
+            {slug !== "marco" && (
+              <button
+                onClick={() => {
+                  setShowChangePin((value) => !value);
+                  setChangePinMessage("");
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-3 text-xs text-white/45 transition hover:text-white"
+              >
+                <KeyRound size={14} />
+                Cambiar PIN
+              </button>
+            )}
 
             <button
               onClick={logout}
@@ -681,7 +791,7 @@ export default function BarberPanelPage() {
             </div>
           </div>
 
-          {showChangePin && (
+          {slug !== "marco" && showChangePin && (
             <div className="mt-7 rounded-[26px] border border-white/10 bg-[#151515] p-5 md:p-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -848,9 +958,9 @@ export default function BarberPanelPage() {
             <div className="flex items-start gap-3">
               <Scissors size={16} className="mt-0.5 text-[#c8a97e]" />
               <p className="text-xs leading-6 text-white/30">
-                La agenda ya está conectada a Supabase y se comparte entre
-                dispositivos. El PIN y la recuperación por correo siguen siendo
-                demostrativos y se guardan localmente en este navegador.
+                La agenda está conectada a Supabase y se comparte entre
+                dispositivos. Marco ya usa Supabase Auth con correo y contraseña;
+                Santiago y Andrés continúan temporalmente con PIN de demostración.
               </p>
             </div>
           </div>

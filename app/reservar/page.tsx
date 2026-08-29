@@ -163,10 +163,13 @@ function ReservarContent() {
   }, [barber, date, bookingVersion]);
 
   useEffect(() => {
-    if (time && unavailableTimes.has(time)) {
+    // Mientras el cliente todavía está eligiendo, si otro usuario ocupa
+    // ese horario lo quitamos de la selección. Una vez confirmada la cita,
+    // NO limpiamos "time", porque necesitamos mostrar la hora en el resumen.
+    if (!confirmed && time && unavailableTimes.has(time)) {
       setTime("");
     }
-  }, [time, unavailableTimes]);
+  }, [confirmed, time, unavailableTimes]);
 
   const canConfirm =
     service &&

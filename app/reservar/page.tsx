@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -8,12 +8,18 @@ import {
   ArrowRight,
   CalendarDays,
   Check,
+  CircleDollarSign,
   Clock3,
+  Smartphone,
   Scissors,
   UserRound,
 } from "lucide-react";
 
 import PageIntro from "@/components/PageIntro";
+import {
+  addReservation,
+  getBookings,
+} from "@/lib/bookingStore";
 
 const services = [
   {
@@ -80,6 +86,10 @@ const times = [
 const formatColones = (value: number) =>
   `₡${value.toLocaleString("es-CR")}`;
 
+
+const DEPOSIT_AMOUNT = 2000;
+const SINPE_NUMBER = "7100-7357";
+
 function ReservarContent() {
   const searchParams = useSearchParams();
   const serviceFromUrl = searchParams.get("servicio");
@@ -107,7 +117,22 @@ function ReservarContent() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
 
+  const [depositAcknowledged, setDepositAcknowledged] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [bookingVersion, setBookingVersion] = useState(0);
+  const [bookingError, setBookingError] = useState("");
+
+  useEffect(() => {
+    const refresh = () => setBookingVersion((value) => value + 1);
+
+    window.addEventListener("storage", refresh);
+    window.addEventListener("barber-club-bookings-updated", refresh);
+
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("barber-club-bookings-updated", refresh);
+    };
+  }, []);
 
   const currentService = useMemo(
     () =>
@@ -123,13 +148,34 @@ function ReservarContent() {
     [barber]
   );
 
+  const unavailableTimes = useMemo(() => {
+    if (!date || !barber) return new Set<string>();
+
+    const busy = getBookings()
+      .filter(
+        (booking) =>
+          booking.barber === barber &&
+          booking.date === date
+      )
+      .map((booking) => booking.time);
+
+    return new Set(busy);
+  }, [barber, date, bookingVersion]);
+
+  useEffect(() => {
+    if (time && unavailableTimes.has(time)) {
+      setTime("");
+    }
+  }, [time, unavailableTimes]);
+
   const canConfirm =
     service &&
     barber &&
     date &&
     time &&
     name.trim().length > 1 &&
-    phone.trim().length > 5;
+    phone.trim().length > 5 &&
+    depositAcknowledged;
 
   if (confirmed) {
     return (
@@ -188,6 +234,16 @@ function ReservarContent() {
               </div>
 
               <div className="flex justify-between gap-5 border-t border-white/10 pt-4">
+                <span className="text-white/35">Adelanto SINPE</span>
+                <span>{formatColones(DEPOSIT_AMOUNT)}</span>
+              </div>
+
+              <div className="flex justify-between gap-5">
+                <span className="text-white/35">Saldo al llegar</span>
+                <span>{formatColones(Math.max(currentService.price - DEPOSIT_AMOUNT, 0))}</span>
+              </div>
+
+              <div className="flex justify-between gap-5 border-t border-white/10 pt-4">
                 <span className="text-white/35">Total</span>
                 <span className="text-xl">
                   {formatColones(currentService.price)}
@@ -197,8 +253,9 @@ function ReservarContent() {
           </div>
 
           <p className="mx-auto mt-6 max-w-lg text-sm leading-7 text-white/40">
-            Esta es una reserva de demostración. En una implementación real,
-            el cliente podría recibir confirmación por WhatsApp o correo.
+            La cita quedó guardada en esta demo y el horario ya aparece ocupado.
+            El adelanto por SINPE es una simulación visual; en una implementación real
+            el negocio verifica el pago y puede enviar confirmación por WhatsApp o correo.
           </p>
 
           <a
@@ -433,25 +490,41 @@ function ReservarContent() {
               <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {times.map((item) => {
                   const active = time === item;
+                  const busy = unavailableTimes.has(item);
 
                   return (
                     <motion.button
                       key={item}
-                      whileTap={{
-                        scale: 0.97,
+                      whileTap={busy ? undefined : { scale: 0.97 }}
+                      disabled={busy}
+                      onClick={() => {
+                        setBookingError("");
+                        setTime(item);
                       }}
-                      onClick={() => setTime(item)}
-                      className={`rounded-[18px] border px-4 py-3 text-sm ${
-                        active
-                          ? "border-[#c8a97e] bg-[#c8a97e] text-[#111]"
-                          : "border-white/10"
+                      className={`rounded-[18px] border px-4 py-3 text-sm transition ${
+                        busy
+                          ? "cursor-not-allowed border-red-400/10 bg-red-400/[0.04] text-white/20 line-through"
+                          : active
+                            ? "border-[#c8a97e] bg-[#c8a97e] text-[#111]"
+                            : "border-white/10 hover:border-white/25"
                       }`}
                     >
-                      {item}
+                      <span className="block">{item}</span>
+                      {busy && (
+                        <span className="mt-1 block text-[8px] uppercase tracking-[0.18em] text-red-300/35 no-underline">
+                          Ocupado
+                        </span>
+                      )}
                     </motion.button>
                   );
                 })}
               </div>
+
+              {bookingError && (
+                <p className="mt-4 rounded-[18px] border border-red-400/10 bg-red-400/[0.05] px-4 py-3 text-xs leading-5 text-red-200/70">
+                  {bookingError}
+                </p>
+              )}
             </section>
 
             {/* PASO 4 */}
@@ -492,6 +565,96 @@ function ReservarContent() {
                   className="rounded-[20px] border border-white/10 bg-[#0f0f0f] px-5 py-4 text-sm outline-none placeholder:text-white/25 sm:col-span-2"
                 />
               </div>
+            </section>
+
+            {/* PASO 5 */}
+            <section className="rounded-[32px] border border-white/10 bg-[#151515] p-6 md:p-8">
+              <p className="text-[9px] uppercase tracking-[0.3em] text-[#c8a97e]">
+                05 · Adelanto
+              </p>
+
+              <h2 className="mt-4 text-3xl tracking-[-0.04em]">
+                Confirma tu espacio con SINPE.
+              </h2>
+
+              <p className="mt-4 max-w-2xl text-sm leading-7 text-white/40">
+                Para asegurar la cita se solicita un adelanto de{" "}
+                <span className="text-white">{formatColones(DEPOSIT_AMOUNT)}</span>.
+                El saldo restante se paga en efectivo o SINPE al llegar a la barbería.
+              </p>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-2">
+                <div className="rounded-[24px] border border-white/10 bg-[#0f0f0f] p-5">
+                  <div className="flex items-center gap-3 text-[#c8a97e]">
+                    <Smartphone size={17} />
+                    <p className="text-[9px] uppercase tracking-[0.28em]">
+                      SINPE Móvil
+                    </p>
+                  </div>
+
+                  <p className="mt-5 text-3xl tracking-[-0.04em]">
+                    {SINPE_NUMBER}
+                  </p>
+
+                  <p className="mt-2 text-xs text-white/30">
+                    Número demostrativo · Costa Rica
+                  </p>
+                </div>
+
+                <div className="rounded-[24px] border border-white/10 bg-[#0f0f0f] p-5">
+                  <div className="flex items-center gap-3 text-[#c8a97e]">
+                    <CircleDollarSign size={17} />
+                    <p className="text-[9px] uppercase tracking-[0.28em]">
+                      Resumen de pago
+                    </p>
+                  </div>
+
+                  <div className="mt-5 space-y-3 text-sm">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/35">Adelanto</span>
+                      <span>{formatColones(DEPOSIT_AMOUNT)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/35">Saldo al llegar</span>
+                      <span>
+                        {formatColones(
+                          Math.max(currentService.price - DEPOSIT_AMOUNT, 0)
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setDepositAcknowledged((value) => !value)}
+                className={`mt-5 flex w-full items-start gap-3 rounded-[22px] border px-5 py-4 text-left transition ${
+                  depositAcknowledged
+                    ? "border-[#c8a97e] bg-[#c8a97e]/10"
+                    : "border-white/10 bg-white/[0.02]"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                    depositAcknowledged
+                      ? "border-[#c8a97e] bg-[#c8a97e] text-[#111]"
+                      : "border-white/25"
+                  }`}
+                >
+                  {depositAcknowledged && <Check size={12} />}
+                </span>
+
+                <span>
+                  <span className="block text-sm">
+                    Ya realicé el adelanto de {formatColones(DEPOSIT_AMOUNT)}
+                  </span>
+                  <span className="mt-1 block text-[10px] leading-5 text-white/30">
+                    Demo: esta confirmación es simulada. En el sistema real el negocio
+                    puede validar el comprobante antes de confirmar definitivamente la cita.
+                  </span>
+                </span>
+              </button>
             </section>
           </div>
 
@@ -559,6 +722,22 @@ function ReservarContent() {
                   </div>
                 </div>
 
+                <div className="mt-6 space-y-3 border-b border-black/10 pb-6 text-sm">
+                  <div className="flex justify-between gap-5">
+                    <span className="opacity-45">Adelanto SINPE</span>
+                    <span>{formatColones(DEPOSIT_AMOUNT)}</span>
+                  </div>
+
+                  <div className="flex justify-between gap-5">
+                    <span className="opacity-45">Saldo al llegar</span>
+                    <span>
+                      {formatColones(
+                        Math.max(currentService.price - DEPOSIT_AMOUNT, 0)
+                      )}
+                    </span>
+                  </div>
+                </div>
+
                 <div className="mt-7 flex items-end justify-between gap-5">
                   <div>
                     <p className="text-[9px] uppercase tracking-[0.25em] opacity-40">
@@ -583,9 +762,30 @@ function ReservarContent() {
                     scale: 0.98,
                   }}
                   disabled={!canConfirm}
-                  onClick={() =>
-                    setConfirmed(true)
-                  }
+                  onClick={() => {
+                    setBookingError("");
+
+                    const result = addReservation({
+                      barber,
+                      service,
+                      date,
+                      time,
+                      customerName: name.trim(),
+                      phone: phone.trim(),
+                      email: email.trim(),
+                    });
+
+                    if (!result.ok) {
+                      setBookingVersion((value) => value + 1);
+                      setTime("");
+                      setBookingError(
+                        "Ese horario acaba de ocuparse. Elige otra hora disponible."
+                      );
+                      return;
+                    }
+
+                    setConfirmed(true);
+                  }}
                   className="mt-7 flex w-full items-center justify-between rounded-full bg-[#111] px-7 py-4 text-sm text-white disabled:cursor-not-allowed disabled:opacity-30"
                 >
                   Confirmar reserva
@@ -594,9 +794,9 @@ function ReservarContent() {
                 </motion.button>
 
                 <p className="mt-4 text-center text-[10px] leading-5 opacity-40">
-                  No se realizará ningún cobro.
+                  Adelanto demo por SINPE: {formatColones(DEPOSIT_AMOUNT)}.
                   <br />
-                  Reserva demostrativa.
+                  No se procesa dinero real en esta demostración.
                 </p>
               </div>
             </div>
